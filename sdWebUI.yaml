@@ -1,0 +1,98 @@
+version: "1.0"
+
+services:
+  sd-webui:
+    image: spheronnetwork/jupyter-notebook:pytorch-2.4.1-cuda-enabled
+    pull_policy: IfNotPresent
+    expose:
+      - port: 7860
+        as: 7860
+        to:
+          - global: true
+      - port: 8888
+        as: 8888
+        to:
+          - global: true
+    env:
+      - JUPYTER_TOKEN=test
+      - PYTHONUNBUFFERED=1
+    command:
+      - "bash"
+      - "-c"
+      - |
+        # Start Jupyter in background with a log file
+        jupyter notebook --allow-root --ip=0.0.0.0 --NotebookApp.token=test --no-browser > /tmp/jupyter.log 2>&1 &
+        
+        # Make sure we have necessary dependencies
+        apt-get update && apt-get install -y git wget libgl1 libglib2.0-0 || true
+        
+        # Clone Stable Diffusion WebUI
+        cd /home/jovyan
+        if [ ! -d "stable-diffusion-webui" ]; then
+          git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git
+        fi
+        cd stable-diffusion-webui
+        
+        # Create models directory if it doesn't exist
+        mkdir -p models/Stable-diffusion
+        
+        # Download the specific model
+        wget --content-disposition -O models/Stable-diffusion/ultra_realistic_mix_portrait_v1.0.safetensors "https://civitai.com/api/download/models/1478064?token=54e1e8f3a5297c54c4d6a7fe87b200c7"
+        
+        # Create a webui-user.sh file with appropriate settings
+        cat > webui-user.sh << 'EOF'
+        #!/bin/bash
+        export COMMANDLINE_ARGS="--listen --port 7860 --enable-insecure-extension-access"
+        export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+        EOF
+        chmod +x webui-user.sh
+        
+        # Launch Stable Diffusion WebUI with logs
+        echo "Starting Stable Diffusion WebUI..."
+        ./webui.sh > /tmp/webui.log 2>&1 &
+        
+        # Give WebUI some time to start
+        sleep 10
+        
+        # Keep the container running and show logs
+        echo "Services started. Container will remain running. View logs with 'tail -f /tmp/webui.log' command."
+        
+        # Keep container running
+        while true; do
+          sleep 60
+          # Print a periodic marker to stdout to keep container active
+          echo "Container is running. Stable Diffusion WebUI should be accessible on port 7860."
+        done
+
+profiles:
+  name: stable-diffusion-webui
+  duration: 1h
+  mode: provider
+  compute:
+    sd-webui:
+      resources:
+        cpu:
+          units: 16
+        memory:
+          size: 64Gi
+        storage:
+          size: 500Gi
+        gpu:
+          units: 1
+          attributes:
+            vendor:
+              nvidia:
+                - model: rtx6000-ada
+  placement:
+    westcoast:
+      attributes:
+      pricing:
+        sd-webui:
+          token: CST
+          amount: 15
+
+deployment:
+  sd-webui:
+    westcoast:
+      profile: sd-webui
+      count: 1
